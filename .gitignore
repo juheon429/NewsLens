@@ -1,0 +1,13 @@
+# Windows download metadata
+*:Zone.Identifier
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
