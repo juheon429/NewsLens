@@ -1,8 +1,10 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,27 +14,34 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NewsCard } from '@/components/news-card';
-import { categories, newsClusters } from '@/data/mock-news';
+import { categories } from '@/data/categories';
+import { useClusterList } from '@/hooks/use-news-api';
 import { colors } from '@/theme/colors';
-import { CategoryFilter } from '@/types/news';
+import { CategoryFilter, NewsPeriod } from '@/types/news';
 
 export default function HomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('전체');
-  const [selectedPeriod, setSelectedPeriod] = useState<'하루' | '1주일' | '2주일'>('하루');
+  const [selectedPeriod, setSelectedPeriod] = useState<NewsPeriod>('하루');
   const [query, setQuery] = useState('');
+  const [requestQuery, setRequestQuery] = useState('');
+  const [page, setPage] = useState(1);
 
-  const filteredNews = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR');
-    const periodHours = selectedPeriod === '하루' ? 24 : selectedPeriod === '1주일' ? 168 : 336;
-    return newsClusters.filter((cluster) => {
-      const inCategory = selectedCategory === '전체' || cluster.category === selectedCategory;
-      const matchesTitle =
-        !normalizedQuery ||
-        cluster.representativeTitle.toLocaleLowerCase('ko-KR').includes(normalizedQuery);
-      const inPeriod = cluster.ageInHours <= periodHours;
-      return inCategory && matchesTitle && inPeriod;
-    });
-  }, [query, selectedCategory, selectedPeriod]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setRequestQuery(query.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const { data, error, loading, reload } = useClusterList({
+    category: selectedCategory,
+    period: selectedPeriod,
+    query: requestQuery,
+    page,
+  });
+
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
 
   const openCluster = (clusterId: string) => {
     router.push({ pathname: '/cluster/[id]', params: { id: clusterId } });
@@ -43,6 +52,14 @@ export default function HomeScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            colors={[colors.primary]}
+            onRefresh={reload}
+            refreshing={loading && Boolean(data)}
+            tintColor={colors.primary}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topBar}>
@@ -77,7 +94,10 @@ export default function HomeScreen() {
             return (
               <Pressable
                 key={category}
-                onPress={() => setSelectedCategory(category)}
+                onPress={() => {
+                  setSelectedCategory(category);
+                  setPage(1);
+                }}
                 style={[styles.categoryButton, selected && styles.categoryButtonSelected]}
               >
                 <Text style={[styles.categoryLabel, selected && styles.categoryLabelSelected]}>
@@ -91,8 +111,8 @@ export default function HomeScreen() {
         <View style={styles.divider} />
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{query ? '검색 결과' : '주요 뉴스'}</Text>
-          <Text style={styles.updatedText}>{filteredNews.length}개 뉴스</Text>
+          <Text style={styles.sectionTitle}>{requestQuery ? '검색 결과' : '주요 뉴스'}</Text>
+          <Text style={styles.updatedText}>{data?.total ?? 0}개 뉴스</Text>
         </View>
 
         <View style={styles.periodSelector}>
@@ -101,7 +121,10 @@ export default function HomeScreen() {
             return (
               <Pressable
                 key={period}
-                onPress={() => setSelectedPeriod(period)}
+                onPress={() => {
+                  setSelectedPeriod(period);
+                  setPage(1);
+                }}
                 style={[styles.periodButton, selected && styles.periodButtonSelected]}
               >
                 <Text style={[styles.periodLabel, selected && styles.periodLabelSelected]}>
@@ -112,21 +135,59 @@ export default function HomeScreen() {
           })}
         </View>
 
-        {filteredNews.length ? (
+        {loading && !data ? (
+          <View style={styles.statusState}>
+            <ActivityIndicator color={colors.primary} size="large" />
+            <Text style={styles.statusDescription}>뉴스를 불러오고 있습니다.</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.statusState}>
+            <Text style={styles.statusTitle}>뉴스를 불러오지 못했습니다</Text>
+            <Text style={styles.statusDescription}>{error}</Text>
+            <Pressable onPress={reload} style={styles.retryButton}>
+              <Text style={styles.retryText}>다시 시도</Text>
+            </Pressable>
+          </View>
+        ) : data?.items.length ? (
           <View style={styles.newsList}>
-            {filteredNews.map((cluster) => (
+            {data.items.map((cluster) => (
               <NewsCard
                 cluster={cluster}
                 key={cluster.id}
                 onPress={() => openCluster(cluster.id)}
               />
             ))}
+            {totalPages > 1 ? (
+              <View style={styles.pagination}>
+                <Pressable
+                  disabled={page === 1}
+                  onPress={() => setPage((value) => Math.max(1, value - 1))}
+                  style={[styles.pageButton, page === 1 && styles.pageButtonDisabled]}
+                >
+                  <Text style={styles.pageButtonText}>이전</Text>
+                </Pressable>
+                <Text style={styles.pageLabel}>
+                  {page} / {totalPages}
+                </Text>
+                <Pressable
+                  disabled={!data.hasNextPage}
+                  onPress={() => setPage((value) => value + 1)}
+                  style={[styles.pageButton, !data.hasNextPage && styles.pageButtonDisabled]}
+                >
+                  <Text style={styles.pageButtonText}>다음</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         ) : (
-          <View style={styles.emptyState}>
+          <View style={styles.statusState}>
             <MaterialCommunityIcons color={colors.textTertiary} name="newspaper-remove" size={38} />
-            <Text style={styles.emptyTitle}>검색 결과가 없습니다</Text>
-            <Text style={styles.emptyDescription}>다른 뉴스 제목을 검색해 보세요.</Text>
+            <Text style={styles.statusTitle}>
+              {requestQuery ? '검색 결과가 없습니다' : '표시할 뉴스가 없습니다'}
+            </Text>
+            <Text style={styles.statusDescription}>
+              {requestQuery ? '다른 뉴스 제목을 검색해 보세요.' : '수집된 뉴스가 생기면 여기에 표시됩니다.'}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -249,20 +310,66 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 20,
   },
-  emptyState: {
+  pagination: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 18,
+    justifyContent: 'center',
+    paddingBottom: 8,
+    paddingTop: 10,
+  },
+  pageButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 9,
+    borderWidth: 1,
+    minWidth: 64,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  pageButtonDisabled: {
+    opacity: 0.35,
+  },
+  pageButtonText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  pageLabel: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
+    minWidth: 48,
+    textAlign: 'center',
+  },
+  statusState: {
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 70,
   },
-  emptyTitle: {
+  statusTitle: {
     color: colors.text,
     fontSize: 17,
     fontWeight: '800',
     marginTop: 12,
   },
-  emptyDescription: {
+  statusDescription: {
     color: colors.textSecondary,
     fontSize: 14,
+    lineHeight: 20,
     marginTop: 6,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    marginTop: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

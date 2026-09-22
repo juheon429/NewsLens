@@ -2,6 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   Linking,
   PanResponder,
@@ -13,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
-import { getArticle } from '@/data/mock-news';
+import { useArticle } from '@/hooks/use-news-api';
 import { colors } from '@/theme/colors';
 
 function getDomain(url: string) {
@@ -22,28 +23,29 @@ function getDomain(url: string) {
 
 export default function ArticleScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const result = getArticle(id);
+  const { data: article, error, loading, reload } = useArticle(id);
   const drag = useMemo(() => new Animated.ValueXY({ x: 0, y: 0 }), []);
+  const clusterId = article?.cluster?.id;
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: Animated.event([null, { dx: drag.x, dy: drag.y }], {
-        useNativeDriver: false,
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderMove: Animated.event([null, { dx: drag.x, dy: drag.y }], {
+          useNativeDriver: false,
+        }),
+        onPanResponderRelease: (_event, gesture) => {
+          drag.extractOffset();
+          if (Math.abs(gesture.dx) < 6 && Math.abs(gesture.dy) < 6 && clusterId) {
+            router.push({ pathname: '/chat/[id]', params: { id: clusterId } });
+          }
+        },
       }),
-      onPanResponderRelease: (_event, gesture) => {
-        drag.extractOffset();
-        if (Math.abs(gesture.dx) < 6 && Math.abs(gesture.dy) < 6 && result) {
-          router.push({ pathname: '/chat/[id]', params: { id: result.cluster.id } });
-        }
-      },
-      }),
-    [drag, result],
+    [clusterId, drag],
   );
 
-  if (!result) {
+  if (loading) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.browserBar}>
@@ -52,13 +54,31 @@ export default function ArticleScreen() {
           </Pressable>
         </View>
         <View style={styles.errorState}>
-          <Text style={styles.errorTitle}>기사를 찾을 수 없습니다.</Text>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.errorDescription}>기사를 불러오고 있습니다.</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  const { article, cluster } = result;
+  if (!article) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.browserBar}>
+          <Pressable hitSlop={12} onPress={() => router.back()}>
+            <MaterialCommunityIcons color={colors.text} name="arrow-left" size={27} />
+          </Pressable>
+        </View>
+        <View style={styles.errorState}>
+          <Text style={styles.errorTitle}>기사를 불러오지 못했습니다</Text>
+          <Text style={styles.errorDescription}>{error ?? '기사를 찾을 수 없습니다.'}</Text>
+          <Pressable onPress={reload} style={styles.retryButton}>
+            <Text style={styles.retryText}>다시 시도</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
@@ -97,20 +117,24 @@ export default function ArticleScreen() {
           style={styles.webView}
         />
 
-        <Animated.View
-          accessibilityHint="끌어서 이동하거나 눌러 AI 대화를 엽니다"
-          accessibilityLabel="AI 챗봇 열기"
-          style={[styles.floatingChat, { transform: drag.getTranslateTransform() }]}
-          {...panResponder.panHandlers}
-        >
-          <MaterialCommunityIcons color="#FFFFFF" name="robot-outline" size={29} />
-        </Animated.View>
+        {clusterId ? (
+          <Animated.View
+            accessibilityHint="끌어서 이동하거나 눌러 AI 대화를 엽니다"
+            accessibilityLabel="AI 챗봇 열기"
+            style={[styles.floatingChat, { transform: drag.getTranslateTransform() }]}
+            {...panResponder.panHandlers}
+          >
+            <MaterialCommunityIcons color="#FFFFFF" name="robot-outline" size={29} />
+          </Animated.View>
+        ) : null}
 
-        <View pointerEvents="none" style={styles.articleContext}>
-          <Text numberOfLines={1} style={styles.contextText}>
-            {cluster.representativeTitle}
-          </Text>
-        </View>
+        {article.cluster?.representativeTitle ? (
+          <View pointerEvents="none" style={styles.articleContext}>
+            <Text numberOfLines={1} style={styles.contextText}>
+              {article.cluster.representativeTitle}
+            </Text>
+          </View>
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -206,5 +230,17 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 7,
     textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    marginTop: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

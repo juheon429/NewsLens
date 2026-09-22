@@ -1,22 +1,38 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ScreenHeader } from '@/components/screen-header';
-import { getCluster } from '@/data/mock-news';
+import { useCluster } from '@/hooks/use-news-api';
 import { colors } from '@/theme/colors';
 
 export default function ClusterDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const cluster = getCluster(id);
+  const { data: cluster, error, loading, reload } = useCluster(id);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScreenHeader title="뉴스 브리핑" />
+        <View style={styles.statusState}>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.statusDescription}>뉴스를 불러오고 있습니다.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!cluster) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader title="뉴스 브리핑" />
-        <View style={styles.notFound}>
-          <Text style={styles.notFoundTitle}>뉴스를 찾을 수 없습니다</Text>
+        <View style={styles.statusState}>
+          <Text style={styles.statusTitle}>뉴스를 불러오지 못했습니다</Text>
+          <Text style={styles.statusDescription}>{error ?? '뉴스를 찾을 수 없습니다.'}</Text>
+          <Pressable onPress={reload} style={styles.retryButton}>
+            <Text style={styles.retryText}>다시 시도</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -30,7 +46,7 @@ export default function ClusterDetailScreen() {
     <SafeAreaView edges={['top']} style={styles.safeArea}>
       <ScreenHeader
         subtitle={`${cluster.category} · ${cluster.publishedLabel} 업데이트`}
-        title="AI 뉴스 브리핑"
+        title="뉴스 브리핑"
       />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Pressable
@@ -41,7 +57,7 @@ export default function ClusterDetailScreen() {
           <View style={styles.briefingTopRow}>
             <View style={styles.aiLabel}>
               <MaterialCommunityIcons color={colors.primary} name="robot-outline" size={17} />
-              <Text style={styles.aiLabelText}>AI 사건 요약</Text>
+              <Text style={styles.aiLabelText}>요약 브리핑</Text>
             </View>
             <View style={styles.talkHint}>
               <MaterialCommunityIcons color={colors.primary} name="chat-outline" size={16} />
@@ -52,7 +68,7 @@ export default function ClusterDetailScreen() {
           <Text style={styles.summary}>{cluster.summary}</Text>
           <View style={styles.chatButton}>
             <MaterialCommunityIcons color="#FFFFFF" name="robot-outline" size={20} />
-            <Text style={styles.chatButtonText}>이 뉴스로 AI와 대화 이어가기</Text>
+            <Text style={styles.chatButtonText}>이 뉴스로 대화 이어가기</Text>
           </View>
         </Pressable>
 
@@ -251,14 +267,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 21,
   },
-  notFound: {
+  statusState: {
     alignItems: 'center',
     flex: 1,
     justifyContent: 'center',
+    padding: 30,
   },
-  notFoundTitle: {
+  statusTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  statusDescription: {
     color: colors.textSecondary,
-    fontSize: 16,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    marginTop: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
-

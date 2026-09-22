@@ -2,10 +2,10 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/theme/colors';
-import { NewsCluster } from '@/types/news';
+import { NewsClusterSummary } from '@/types/news';
 
 interface NewsCardProps {
-  cluster: NewsCluster;
+  cluster: NewsClusterSummary;
   onPress: () => void;
 }
 
@@ -40,7 +40,11 @@ export function NewsCard({ cluster, onPress }: NewsCardProps) {
         </View>
       </View>
 
-      <Image source={{ uri: cluster.imageUrl }} style={styles.thumbnail} />
+      {cluster.imageUrl ? (
+        <Image source={{ uri: cluster.imageUrl }} style={styles.thumbnail} />
+      ) : (
+        <View style={styles.thumbnail} />
+      )}
     </Pressable>
   );
 }
@@ -108,4 +112,3 @@ const styles = StyleSheet.create({
     width: 88,
   },
 });
-
