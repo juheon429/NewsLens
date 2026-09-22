@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum ArticleStatus {
+  DISCOVERED
+  CLUSTERED
+  FAILED
+}
+
+enum ClusterStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum NewsCategory {
+  POLITICS
+  ECONOMY
+  SOCIETY
+  CULTURE
+  WORLD
+  TECH
+  ENTERTAINMENT
+  SPORTS
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
+model Article {
+  id               String                      @id @default(uuid()) @db.Uuid
+  dedupKey         String                      @unique
+  publisher        String
+  guid             String?
+  url              String
+  canonicalUrl     String
+  title            String
+  rawDescription   String?
+  cleanDescription String?
+  imageUrl         String?
+  category         NewsCategory
+  publishedAt      DateTime
+  embedding        Unsupported("vector(768)")?
+  status           ArticleStatus               @default(DISCOVERED)
+  processingError  String?
+  clusterId        String?                     @db.Uuid
+  cluster          NewsCluster?                @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  @@index([publishedAt])
+  @@index([clusterId])
+  @@index([publisher, guid])
+  @@index([category, publishedAt])
+}
+
+model NewsCluster {
+  id                      String                     @id @default(uuid()) @db.Uuid
+  aiTitle                 String?
+  aiBriefing              String?
+  briefingSources         Json?
+  generatedAt             DateTime?
+  generatedArticleCount   Int?
+  generatedPublisherCount Int?
+  category                NewsCategory
+  imageUrl                String?
+  clusterEmbedding        Unsupported("vector(768)")
+  articleCount            Int                        @default(0)
+  publisherCount          Int                        @default(0)
+  lastPublishedAt         DateTime
+  status                  ClusterStatus              @default(ACTIVE)
+  articles                Article[]
+  chatRooms               ChatRoom[]
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+
+  @@index([status, lastPublishedAt])
+  @@index([category, lastPublishedAt])
+}
+
+model ChatRoom {
+  id        String        @id @default(uuid()) @db.Uuid
+  clientId  String
+  clusterId String        @db.Uuid
+  cluster   NewsCluster   @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([clientId, clusterId])
+  @@index([clientId, updatedAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  roomId    String   @db.Uuid
+  room      ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  role      ChatRole
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+}

@@ -1,118 +1,137 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   createContext,
   PropsWithChildren,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
-import { getCluster } from '@/data/mock-news';
-import { ChatMessage, ChatRoom } from '@/types/news';
+import {
+  deleteChatRoom,
+  getChatRoom,
+  getChatRooms,
+  postChatMessage,
+} from '@/api/news-api';
+import { ChatRoom } from '@/types/news';
+
+const CLIENT_ID_STORAGE_KEY = 'newslens.client-id.v1';
 
 interface ChatContextValue {
+  error: string | null;
+  ensureRoom: (clusterId: string) => Promise<void>;
+  leaveRoom: (clusterId: string) => Promise<void>;
+  loading: boolean;
   rooms: ChatRoom[];
-  ensureRoom: (clusterId: string) => void;
-  sendMessage: (clusterId: string, content: string) => void;
+  sendMessage: (clusterId: string, content: string) => Promise<void>;
+  sendingClusterId: string | null;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
-const initialRoomIds = [
-  'budget-review',
-  'capital-flood',
-  'ai-investment',
-  'interest-rate',
-];
-
-function makeRoom(clusterId: string, order = 0): ChatRoom | undefined {
-  const cluster = getCluster(clusterId);
-  if (!cluster) return undefined;
-
-  return {
-    clusterId: cluster.id,
-    title: cluster.representativeTitle,
-    category: cluster.category,
-    updatedAt: Date.now() - order * 25 * 60 * 1000,
-    updatedLabel: order === 0 ? '10분 전' : order === 1 ? '35분 전' : order === 2 ? '2시간 전' : '어제',
-    messages: [
-      {
-        id: `${cluster.id}-briefing`,
-        role: 'assistant',
-        content: cluster.summary,
-        createdAt: '오후 09:59',
-        isBriefing: true,
-      },
-    ],
-  };
+function createClientId() {
+  const time = Date.now().toString(36);
+  const random = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  return `device_${time}_${random}`.slice(0, 100);
 }
 
-const initialRooms = initialRoomIds
-  .map((id, index) => makeRoom(id, index))
-  .filter((room): room is ChatRoom => Boolean(room));
+function replaceRoom(rooms: ChatRoom[], room: ChatRoom) {
+  return [room, ...rooms.filter((item) => item.clusterId !== room.clusterId)];
+}
+
+function readError(error: unknown) {
+  return error instanceof Error ? error.message : '채팅 서버에 연결하지 못했습니다.';
+}
 
 export function ChatProvider({ children }: PropsWithChildren) {
-  const [rooms, setRooms] = useState<ChatRoom[]>(initialRooms);
+  const [rooms, setRooms] = useState<ChatRoom[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sendingClusterId, setSendingClusterId] = useState<string | null>(null);
+  const clientIdRef = useRef<string | null>(null);
 
-  const ensureRoom = useCallback((clusterId: string) => {
-    setRooms((current) => {
-      if (current.some((room) => room.clusterId === clusterId)) return current;
-      const room = makeRoom(clusterId);
-      return room ? [room, ...current] : current;
-    });
-  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
 
-  const sendMessage = useCallback((clusterId: string, content: string) => {
-    const normalized = content.trim();
-    if (!normalized) return;
-
-    const userMessage: ChatMessage = {
-      id: `${clusterId}-user-${Date.now()}`,
-      role: 'user',
-      content: normalized,
-      createdAt: '방금',
+    const initialize = async () => {
+      try {
+        let clientId = await AsyncStorage.getItem(CLIENT_ID_STORAGE_KEY);
+        if (!clientId) {
+          clientId = createClientId();
+          await AsyncStorage.setItem(CLIENT_ID_STORAGE_KEY, clientId);
+        }
+        clientIdRef.current = clientId;
+        const savedRooms = await getChatRooms(clientId, controller.signal);
+        if (active) setRooms(savedRooms);
+      } catch (initializeError) {
+        if (active && !controller.signal.aborted) setError(readError(initializeError));
+      } finally {
+        if (active) setLoading(false);
+      }
     };
 
-    setRooms((current) =>
-      current.map((room) =>
-        room.clusterId === clusterId
-          ? {
-              ...room,
-              messages: [...room.messages, userMessage],
-              updatedAt: Date.now(),
-              updatedLabel: '방금',
-            }
-          : room,
-      ),
-    );
+    void initialize();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
 
-    setTimeout(() => {
-      const assistantMessage: ChatMessage = {
-        id: `${clusterId}-assistant-${Date.now()}`,
-        role: 'assistant',
-        content:
-          '현재는 프런트 화면 확인을 위한 샘플 응답입니다. 백엔드를 연결하면 이 뉴스 묶음과 관련 기사를 바탕으로 답변하게 됩니다.',
-        createdAt: '방금',
-      };
+  const ensureRoom = useCallback(async (clusterId: string) => {
+    const clientId = clientIdRef.current;
+    if (!clientId) return;
+    try {
+      setError(null);
+      const room = await getChatRoom(clientId, clusterId);
+      setRooms((current) => replaceRoom(current, room));
+    } catch (requestError) {
+      setError(readError(requestError));
+      throw requestError;
+    }
+  }, []);
 
-      setRooms((current) =>
-        current.map((room) =>
-          room.clusterId === clusterId
-            ? {
-                ...room,
-                messages: [...room.messages, assistantMessage],
-                updatedAt: Date.now(),
-                updatedLabel: '방금',
-              }
-            : room,
-        ),
-      );
-    }, 650);
+  const sendMessage = useCallback(
+    async (clusterId: string, content: string) => {
+      const clientId = clientIdRef.current;
+      if (!clientId) throw new Error('채팅을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.');
+
+      const normalized = content.trim();
+      if (!normalized || sendingClusterId) return;
+      try {
+        setError(null);
+        setSendingClusterId(clusterId);
+        const room = await postChatMessage(clientId, clusterId, normalized);
+        setRooms((current) => replaceRoom(current, room));
+      } catch (requestError) {
+        setError(readError(requestError));
+        throw requestError;
+      } finally {
+        setSendingClusterId(null);
+      }
+    },
+    [sendingClusterId],
+  );
+
+  const leaveRoom = useCallback(async (clusterId: string) => {
+    const clientId = clientIdRef.current;
+    if (!clientId) throw new Error('채팅을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.');
+    try {
+      setError(null);
+      await deleteChatRoom(clientId, clusterId);
+      setRooms((current) => current.filter((room) => room.clusterId !== clusterId));
+    } catch (requestError) {
+      setError(readError(requestError));
+      throw requestError;
+    }
   }, []);
 
   const value = useMemo(
-    () => ({ rooms, ensureRoom, sendMessage }),
-    [ensureRoom, rooms, sendMessage],
+    () => ({ error, ensureRoom, leaveRoom, loading, rooms, sendMessage, sendingClusterId }),
+    [error, ensureRoom, leaveRoom, loading, rooms, sendMessage, sendingClusterId],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
@@ -120,9 +139,6 @@ export function ChatProvider({ children }: PropsWithChildren) {
 
 export function useChats() {
   const context = useContext(ChatContext);
-  if (!context) {
-    throw new Error('useChats must be used inside ChatProvider');
-  }
+  if (!context) throw new Error('useChats must be used inside ChatProvider');
   return context;
 }
-

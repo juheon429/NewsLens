@@ -71,7 +71,7 @@ export interface ChatRoom {
   clusterId: string;
   title: string;
   category: NewsCategory;
-  updatedAt: number;
+  updatedAt: string;
   updatedLabel: string;
   messages: ChatMessage[];
 }
